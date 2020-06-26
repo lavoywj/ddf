@@ -274,6 +274,28 @@ public class DynamicSchemaResolver {
   public void addFields(Metacard metacard, SolrInputDocument solrInputDocument)
       throws MetacardCreationException {
     MetacardType schema = metacard.getMetacardType();
+    Set<String> metadatacontactAttrs = new HashSet<>();
+    metadatacontactAttrs.add("ext.metadata-contact-name");
+    metadatacontactAttrs.add("ext.metadata-contact-phone");
+    metadatacontactAttrs.add("ext.metadata-contact-fax");
+    metadatacontactAttrs.add("ext.metadata-contact-address");
+    metadatacontactAttrs.add("ext.metadata-contact-city");
+    metadatacontactAttrs.add("ext.metadata-contact-country-trigraph");
+    metadatacontactAttrs.add("ext.metadata-contact-country-digraph");
+    metadatacontactAttrs.add("ext.metadata-contact-email");
+    metadatacontactAttrs.add("ext.metadata-contact-url");
+    metadatacontactAttrs.add("id");
+    Set<String> contactAttrs = new HashSet<>();
+    contactAttrs.add("contact.point-of-contact-name");
+    contactAttrs.add("contact.point-of-contact-phone");
+    contactAttrs.add("ext.contact-point-of-contact-fax");
+    contactAttrs.add("contact.point-of-contact-address");
+    contactAttrs.add("ext.contact-point-of-contact-city");
+    contactAttrs.add("ext.contact-point-of-contact-country-trigraph");
+    contactAttrs.add("ext.contact-point-of-contact-country-digraph");
+    contactAttrs.add("contact.point-of-contact-email");
+    contactAttrs.add("ext.contact-point-of-contact-url");
+    contactAttrs.add("id");
 
     // TODO: register these metacard types when a new one is seen
 
@@ -301,25 +323,82 @@ public class DynamicSchemaResolver {
               && solrInputDocument.getFieldValue(
                       ad.getName() + getFieldSuffix(AttributeFormat.STRING))
                   == null) {
-            List<Serializable> truncatedValues =
-                attributeValues
-                    .stream()
-                    .map(
-                        value ->
-                            value != null
-                                ? truncateAsUTF8(value.toString(), TOKEN_MAXIMUM_BYTES)
-                                : value)
-                    .collect(Collectors.toList());
-            // *_txt
-            solrInputDocument.addField(
-                ad.getName() + getFieldSuffix(AttributeFormat.STRING), truncatedValues);
 
-            // *_txt_tokenized
-            solrInputDocument.addField(
-                ad.getName()
-                    + getFieldSuffix(AttributeFormat.STRING)
-                    + getSpecialIndexSuffix(AttributeFormat.STRING),
-                attributeValues);
+            if (ad.getName().equals("ext.nested-metadata-contacts")) {
+              int children = attributeValues.size();
+              for (int i = 0; i < children; i++) {
+                SolrInputDocument child = new SolrInputDocument();
+                Map<String, Object> metadataContact = (Map<String, Object>) attributeValues.get(i);
+                Map<String, Object> metadataContactMap =
+                    (Map<String, Object>) metadataContact.get("properties");
+                for (String attr : metadatacontactAttrs) {
+                  if (metadataContactMap.get(attr) != null) {
+                    List<Serializable> attrVal = (List<Serializable>) metadataContactMap.get(attr);
+                    List<Serializable> val =
+                        attrVal
+                            .stream()
+                            .filter(item -> !((String) item).isEmpty())
+                            .map(
+                                value ->
+                                    value != null
+                                        ? truncateAsUTF8(value.toString(), TOKEN_MAXIMUM_BYTES)
+                                        : value)
+                            .collect(Collectors.toList());
+                    // *_txt
+                    child.addField(attr + getFieldSuffix(AttributeFormat.STRING), val);
+                  }
+                }
+                child.addField("content-type", "nested-metadata-contact");
+                solrInputDocument.addChildDocument(child);
+              }
+            } else if (ad.getName().equals("ext.nested-contacts")) {
+              int children1 = attributeValues.size();
+              for (int i = 0; i < children1; i++) {
+                SolrInputDocument child = new SolrInputDocument();
+                Map<String, Object> contactMetacard = (Map<String, Object>) attributeValues.get(i);
+                Map<String, Object> contactMetacardMap =
+                    (Map<String, Object>) contactMetacard.get("properties");
+                for (String attr : contactAttrs) {
+                  if (contactMetacardMap.get(attr) != null) {
+                    List<Serializable> attrVal = (List<Serializable>) contactMetacardMap.get(attr);
+                    List<Serializable> val =
+                        attrVal
+                            .stream()
+                            .filter(item -> !((String) item).isEmpty())
+                            .map(
+                                value ->
+                                    value != null
+                                        ? truncateAsUTF8(value.toString(), TOKEN_MAXIMUM_BYTES)
+                                        : value)
+                            .collect(Collectors.toList());
+                    // *_txt
+                    child.addField(attr + getFieldSuffix(AttributeFormat.STRING), val);
+                  }
+                }
+                child.addField("content-type", "nested-contact");
+                solrInputDocument.addChildDocument(child);
+              }
+            } else {
+              List<Serializable> truncatedValues =
+                  attributeValues
+                      .stream()
+                      .map(
+                          value ->
+                              value != null
+                                  ? truncateAsUTF8(value.toString(), TOKEN_MAXIMUM_BYTES)
+                                  : value)
+                      .collect(Collectors.toList());
+              // *_txt
+              solrInputDocument.addField(
+                  ad.getName() + getFieldSuffix(AttributeFormat.STRING), truncatedValues);
+
+              // *_txt_tokenized
+              solrInputDocument.addField(
+                  ad.getName()
+                      + getFieldSuffix(AttributeFormat.STRING)
+                      + getSpecialIndexSuffix(AttributeFormat.STRING),
+                  attributeValues);
+            }
           } else if (AttributeFormat.OBJECT.equals(format)) {
             ByteArrayOutputStream byteArrayOS = new ByteArrayOutputStream();
             List<Serializable> byteArrays = new ArrayList<>();
@@ -345,7 +424,10 @@ public class DynamicSchemaResolver {
           }
 
           // Prevent adding a field already on document
-          if (solrInputDocument.getFieldValue(formatIndexName) == null) {
+          if (solrInputDocument.getFieldValue(formatIndexName) == null
+              && !AttributeFormat.OBJECT.equals(format)
+              && !formatIndexName.equals("ext.nested-contacts_txt")
+              && !formatIndexName.equals("ext.nested-metadata-contacts_txt")) {
             solrInputDocument.addField(formatIndexName, attributeValues);
           } else {
             LOGGER.trace("Skipping adding field already found on document ({})", formatIndexName);
@@ -379,6 +461,7 @@ public class DynamicSchemaResolver {
      */
     String schemaName = String.format("%s#%s", schema.getName(), schema.hashCode());
     solrInputDocument.addField(SchemaFields.METACARD_TYPE_FIELD_NAME, schemaName);
+    solrInputDocument.addField("content-type", "parent");
     byte[] metacardTypeBytes = metacardTypeNameToSerialCache.getIfPresent(schemaName);
 
     if (metacardTypeBytes == null) {
